@@ -4,10 +4,12 @@ const XLSX = require('xlsx');
 const { logAudit } = require('../services/schemaService');
 
 const money = v => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(v || 0));
-const latestImport = async () => (await db.query(`SELECT * FROM data_imports WHERE dataset_type='summary' AND status='completed' ORDER BY created_at DESC LIMIT 1`)).rows[0];
+const { selectImport } = require('../services/periodService');
+const { metrics } = require('../services/analyticsMath');
 
 function createDoc(res, title) {
   const doc = new PDFDocument({ size: 'A4', margin: 36, info: { Title: title, Author: 'eFOT' } });
+  doc.font(require('path').join(__dirname, '../fonts/DejaVuSans.ttf'));
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="efot-report-${Date.now()}.pdf"`);
   doc.pipe(res);
@@ -16,15 +18,17 @@ function createDoc(res, title) {
 
 async function generatePdf(req, res) {
   try {
-    const latest = await latestImport();
+    const latest = await selectImport('summary', req.query);
     if (!latest) return res.status(404).json({ message: 'Нет загруженного набора данных' });
-    const { rows } = await db.query(`SELECT oked_code,activity,employees,payroll,average_salary,taxes FROM data_snapshots WHERE import_id=$1 ORDER BY payroll DESC NULLS LAST`, [latest.id]);
+    const { rows } = await db.query(`SELECT * FROM data_snapshots WHERE import_id=$1 ORDER BY payroll DESC NULLS LAST`, [latest.id]);
     const doc = createDoc(res, 'eFOT — аналитический отчет');
     doc.fontSize(20).text('eFOT — аналитический отчет');
     doc.moveDown(0.5).fontSize(10).fillColor('#555').text(`Период: ${latest.period_label || 'не определен'} | Территория: ${latest.territory || 'не определена'}`);
     doc.moveDown().fillColor('#000');
-    const totals = rows.reduce((a, r) => ({ org: a.org + 1, emp: a.emp + Number(r.employees || 0), payroll: a.payroll + Number(r.payroll || 0), taxes: a.taxes + Number(r.taxes || 0) }), { org: 0, emp: 0, payroll: 0, taxes: 0 });
-    doc.fontSize(12).text(`Организаций: ${totals.org}    Работников: ${money(totals.emp)}    ФОТ: ${money(totals.payroll)}    Налоги: ${money(totals.taxes)}`);
+    const totals = metrics(rows, latest);
+    const value = n => n == null ? 'нет данных' : money(n);
+    doc.fontSize(12).text(`Организаций (сумма НП): ${value(totals.organizations)}    Работников: ${value(totals.employees)}    ФОТ: ${value(totals.payroll)}    Средняя ЗП: ${value(totals.averageSalary)}    Налоги: ${value(totals.taxes)}`);
+    totals.warnings.forEach(w => doc.fontSize(9).text(w));
     doc.moveDown();
     doc.fontSize(13).text('Основные показатели');
     doc.moveDown(0.3).fontSize(8);
@@ -77,7 +81,7 @@ async function generateSelectedPdf(req, res) {
 
 async function generateExcel(req, res) {
   try {
-    const latest = await latestImport();
+    const latest = await selectImport('summary', req.query);
     if (!latest) return res.status(404).json({ message: 'Нет загруженного набора данных' });
     const { rows } = await db.query(`SELECT oked_code AS "Код ОКЭД",activity AS "Вид деятельности",employees AS "Численность",payroll AS "ФОТ",average_salary AS "Средняя ЗП",taxes AS "Налоги",share AS "Удельный вес" FROM data_snapshots WHERE import_id=$1 ORDER BY payroll DESC NULLS LAST`, [latest.id]);
     const wb = XLSX.utils.book_new();

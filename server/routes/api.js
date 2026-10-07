@@ -9,6 +9,8 @@ router.use(auth);
 
 router.get('/data', analytics.getData);
 router.get('/analytics/overview', analytics.overview);
+router.get('/analytics/periods', analytics.periods);
+router.get('/analytics/history', analytics.history);
 router.get('/analytics/scenarios', analytics.scenarios);
 router.get('/analytics/alerts', analytics.alerts);
 router.get('/analytics/imports', analytics.imports);

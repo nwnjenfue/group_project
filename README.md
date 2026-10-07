@@ -74,4 +74,25 @@ This follows the product materials: the target is to reduce manual reporting, pr
 
 ## Important data limitation
 
+### Periods and calculation rules
+
+- Select an imported year, quarter or month on the dashboard; the table, company drill-down and full exports use that selected import.
+- Both summary and company-level Excel imports appear in the dataset selector, including files without a known period. A successful upload selects the returned import ID immediately; company-level files do not require a separate summary upload. Historical comparisons stay within the same dataset type.
+- When uploading, specify a period such as `2026`, `2026-03` or `2026, 1 квартал`, and a territory. Unknown periods remain visible but cannot participate in historical comparisons.
+- An import is a complete replacement of its dataset type / territory / reporting period, not an incremental batch. For repeated imports, only the newest completed revision participates in analytics; older records remain stored. Imports with no identifiable period are kept separate.
+- History follows reporting dates, not upload dates. Comparisons use the same territory and period duration; zero baselines have an absolute difference but no percentage.
+- Summary organization counts sum the source `Количество НП` values. They are not a count of OKED rows or a guaranteed unique BIN count across industries. If those source counts are missing, the KPI is unavailable.
+- Monthly average salary uses payroll divided by employee-month exposure when duration and payroll are available. Otherwise, source salaries are weighted by workforce. Missing inputs are shown as unavailable rather than zero. Source monetary units must be tenge; the importer does not infer thousands/millions.
+- For company records repeated across OKED rows, workforce uses the maximum (the existing company-level convention). Salary is unavailable until workforce allocation is unambiguous; payroll and taxes sum the source rows.
+- No quarterly or monthly values are synthesized from annual reports. Load actual reports for the required periods. The first historical comparison requires at least two comparable reporting periods.
+
+Validation:
+
+```bash
+node --test tests/analytics.test.js tests/analytics.integration.test.js
+npm --prefix client run build
+```
+
+The integration test requires the configured PostgreSQL database and existing analytics tables. It uses session-local temporary tables and rolls back its records.
+
 Historical trends, territorial comparisons and full counterparty risk analysis require corresponding historical, territorial and company-level source data. The system stores snapshots and metadata for this purpose, but it does not fabricate missing history or external government data. An anomaly is a signal for review, not a statement that a company violated a law.

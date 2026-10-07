@@ -4,6 +4,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../config/db');
 const { logAudit } = require('./schemaService');
+const { parsePeriod } = require('./analyticsMath');
 
 const FIELD_ALIASES = {
   oked_code: ['код окэд','код о к э д','окэд код','oked','oked code'],
@@ -38,6 +39,9 @@ const toNumber = (value) => {
 function matchField(header) {
   const normalized = normalizeHeader(header);
   for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+    if (aliases.some(alias => normalized === normalizeHeader(alias))) return field;
+  }
+  for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
     if (aliases.some(alias => normalized === normalizeHeader(alias) || normalized.includes(normalizeHeader(alias)))) return field;
   }
   return null;
@@ -59,17 +63,13 @@ function findHeaderRow(matrix) {
 
 function inferMetadata(matrix, filename, headerIndex = 0) {
   const text = matrix.slice(0, Math.max(1, Math.min(headerIndex, 10))).flat().filter(Boolean).map(cleanText).join(' | ');
-  const periodMatch = text.match(/(?:за|на|период\s*)?\s*((?:19|20)\d{2})(?:\s*[-/]\s*((?:19|20)\d{2}))?\s*(?:год(?:а|у)?|г\.)?/i);
-  const quarterMatch = text.match(/([1-4])\s*(?:квартал|кв\.?)/i);
   const territoryMatch = text.match(/(?:по|для)\s+(.{2,120}?(?:област[ьи]|район(?:а|у)?|города|город[ае]?))\b/i);
   const fileText = cleanText(path.basename(filename));
-  const fileYear = fileText.match(/20\d{2}/)?.[0];
-  const year = periodMatch?.[1] || fileYear || null;
-  const label = year ? `${year}${quarterMatch ? `, ${quarterMatch[1]} квартал` : ''}` : null;
+  const period = parsePeriod(text) || parsePeriod(fileText);
   return {
-    periodLabel: label,
-    periodStart: year ? `${year}-01-01` : null,
-    periodEnd: year ? `${year}-12-31` : null,
+    periodLabel: period?.periodLabel || null,
+    periodStart: period?.periodStart || null,
+    periodEnd: period?.periodEnd || null,
     territory: territoryMatch?.[1]?.trim() || null,
   };
 }
@@ -81,7 +81,7 @@ function detectType(mapping) {
   return 'unknown';
 }
 
-function parseWorkbook(filePath) {
+function parseWorkbook(filePath, originalFilename = filePath) {
   const workbook = XLSX.readFile(filePath, { cellDates: true, raw: true });
   if (!workbook.SheetNames.length) throw new Error('В Excel нет листов');
   const sheetName = workbook.SheetNames[0];
@@ -94,7 +94,7 @@ function parseWorkbook(filePath) {
   headers.forEach((h, idx) => { const field = matchField(h); if (field && mapping[field] === undefined) mapping[field] = idx; });
   const datasetType = detectType(Object.fromEntries(Object.keys(mapping).map(k => [k, headers[mapping[k]]])));
   if (datasetType === 'unknown') throw new Error('Тип данных не определён. Нужны поля ОКЭД/деятельность/ФОТ для сводных данных или ОКЭД/ИИН-БИН/ФОТ/наименование для детальных данных.');
-  const metadata = inferMetadata(matrix, filePath, header.index);
+  const metadata = inferMetadata(matrix, originalFilename, header.index);
   const rows = matrix.slice(header.index + 1).filter(row => row.some(v => v !== null && cleanText(v) !== ''));
   return { workbook, sheetName, headerRow: header.index + 1, headers, mapping, datasetType, metadata, rows };
 }
@@ -154,8 +154,14 @@ async function analyzeFile(filePath) {
   };
 }
 
-async function importFile({ filePath, originalFilename, userId, ip }) {
-  const parsed = parseWorkbook(filePath);
+async function importFile({ filePath, originalFilename, userId, ip, period, territory }) {
+  const parsed = parseWorkbook(filePath, originalFilename);
+  if (period) {
+    const selected = parsePeriod(period);
+    if (!selected) throw new Error('Укажите период: 2026, 2026-03 или 2026, 1 квартал.');
+    Object.assign(parsed.metadata, selected);
+  }
+  if (territory) parsed.metadata.territory = cleanText(territory);
   const detectedColumns = Object.fromEntries(Object.entries(parsed.mapping).map(([k, idx]) => [k, parsed.headers[idx]]));
   const importId = uuidv4();
   const warnings = [];
