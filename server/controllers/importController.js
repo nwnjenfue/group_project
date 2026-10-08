@@ -7,7 +7,7 @@ function safeRemove(file) { try { if (file) fs.unlinkSync(file); } catch (_) {} 
 exports.analyze = async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
   try {
-    const result = await analyzeFile(req.file.path);
+    const result = await analyzeFile(req.file.path, req.file.originalname);
     res.json(result);
   } catch (error) {
     res.status(422).json({ message: error.message });

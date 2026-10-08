@@ -201,4 +201,4 @@ async function history(req, res) {
     res.json({ data, comparison: baseline && baseline !== current ? { period: baseline.period, changes: math.changes(current, baseline) } : null });
   } catch (error) { res.status(error.status || 500).json({ message: error.message }); }
 }
-module.exports = { getData, overview, scenarios, relatedActivity, companyProfile, alerts, imports, periods, history };
+module.exports = { getData, overview, scenarios, relatedActivity, companyProfile, alerts, imports, periods, history, buildSummaryWhere };

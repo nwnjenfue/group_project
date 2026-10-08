@@ -173,8 +173,8 @@ function validateRow(row, type) {
   return errors;
 }
 
-async function analyzeFile(filePath) {
-  const parsed = parseWorkbook(filePath);
+async function analyzeFile(filePath, originalFilename = filePath) {
+  const parsed = parseWorkbook(filePath, originalFilename);
   const sample = parsed.rows.slice(0, 5).map(row => mapRow(parsed, row));
   return {
     datasetType: parsed.datasetType,

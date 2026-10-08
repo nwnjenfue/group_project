@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Box, Button, Card, CardContent, Chip, Grid, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Card, CardContent, Chip, Grid, MenuItem, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
 import DataTable, { DataRow } from './DataTable';
-import DataCharts from './DataCharts';
+import DataCharts from './OverviewCharts';
 import HistoryCharts, { formatMetric, metricLabels } from './HistoryCharts';
 import api from '../api/axios';
+import UploadExcel from './UploadExcel';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Period { id: string; label: string; territory: string | null; granularity: string; createdAt: string; datasetType: string; filename: string; rows: number; }
 export default function Dashboard() {
+  const {isAdmin}=useAuth();
+  const [view,setView]=useState('overview');
   const [periods, setPeriods] = useState<Period[]>([]);
   const [importId, setImportId] = useState('');
   const [compareId, setCompareId] = useState('');
@@ -53,25 +57,29 @@ export default function Dashboard() {
     try { const r = await api.get('/analytics/scenarios', { params: { scenario, importId } }); setScenarioData(r.data.data || []); }
     catch (e: any) { setError(e.response?.data?.message || 'Ошибка сценария'); }
   };
-  return <Box sx={{ p: { xs: 1, md: 2 } }}>
-    <Typography variant="h4" fontWeight={900}>Панель eFOT</Typography>
-    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ my: 2 }}>
-      <TextField select label="Длительность" value={granularity} sx={{ minWidth: 180 }} onChange={e => {
+  return <Box sx={{ maxWidth:1600, mx:'auto', p: { xs: 2, md: 4 } }}>
+    <Stack direction={{xs:'column',sm:'row'}} justifyContent="space-between" alignItems={{sm:'center'}} spacing={2} sx={{mb:3}}>
+      <Box><Typography variant="overline" color="primary" fontWeight={800}>eFOT · Аналитика организаций</Typography><Typography variant="h4" fontWeight={800}>Ваши данные — понятные решения</Typography><Typography color="text.secondary" sx={{mt:1}}>Загрузите Excel, изучите показатели и сохраните отчет.</Typography></Box>
+      {isAdmin&&<UploadExcel onImported={refresh}/>}
+    </Stack>
+    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ my: 2, p:2, bgcolor:'white',border:'1px solid #dce5ee',borderRadius:3 }}>
+      <TextField select label="Тип периода" value={granularity} sx={{ minWidth: 180 }} onChange={e => {
         const value = e.target.value; setGranularity(value); setCompareId('');
         setImportId(periods.find(p => value === 'all' || p.granularity === value)?.id || '');
       }}>{[['all','Все'],['year','Год'],['quarter','Квартал'],['month','Месяц'],['unknown','Без периода']].map(([v,l]) => <MenuItem key={v} value={v}>{l}</MenuItem>)}</TextField>
-      <TextField select label="Период и территория" value={options.some(p => p.id === importId) ? importId : ''} sx={{ minWidth: 290 }} onChange={e => { setImportId(e.target.value); setCompareId(''); }}>
+      <TextField select label="Загруженный набор" value={options.some(p => p.id === importId) ? importId : ''} sx={{ minWidth: 0, flex:1 }} onChange={e => { setImportId(e.target.value); setCompareId(''); }}>
         <MenuItem value="">Нет выбранного набора</MenuItem>{options.map(p => <MenuItem key={p.id} value={p.id}>{p.label} · {p.territory || 'Территория не указана'} · {p.datasetType === 'detail' ? 'Компании' : 'Сводка'} · {p.rows} строк · {new Date(p.createdAt).toLocaleString('ru-RU')}</MenuItem>)}
       </TextField>
-      <TextField select label="Сравнить с" value={compareId} sx={{ minWidth: 220 }} onChange={e => setCompareId(e.target.value)}>
+      <TextField select label="Сравнить с" value={compareId} disabled={!comparable.length} sx={{ minWidth: 220 }} onChange={e => setCompareId(e.target.value)}>
         <MenuItem value="">Предыдущий период</MenuItem>{comparable.map(p => <MenuItem key={p.id} value={p.id}>{p.label}</MenuItem>)}
       </TextField>
     </Stack>
+    <Tabs value={view} onChange={(_,value)=>setView(value)} sx={{mb:2,borderBottom:'1px solid #dce5ee'}} aria-label="Разделы аналитики"><Tab value="overview" label="Обзор показателей"/><Tab value="data" label="Таблица и отчеты"/></Tabs>
     {error && <Alert severity="error">{error}</Alert>}
     {importMessage && <Alert severity="success" onClose={() => setImportMessage('')}>{importMessage}</Alert>}
     {loading && <Alert severity="info">Загрузка выбранного периода…</Alert>}
-    {!importId && <Alert severity="info">Нет наборов выбранной длительности. Загрузите Excel и укажите период.</Alert>}
-    {importId && !loading && <>
+    {!importId && <Alert severity="info">Пока нет данных для отображения. Нажмите «Загрузить Excel» вверху страницы или выберите другой тип периода.</Alert>}
+    {importId && !loading && view==='overview' && <>
       {selected?.granularity === 'unknown' && <Alert severity="warning">Период не определён. Исторические сравнения недоступны; загрузите файл повторно с указанием периода.</Alert>}
       <Grid container spacing={2} sx={{ my: 1 }}>{Object.entries(metricLabels).map(([key, label]) => <Grid item xs={12} sm={6} md={2.4} key={key}>
         <Card><CardContent><Typography color="text.secondary">{label}</Typography><Typography variant="h5" fontWeight={800}>{formatMetric(metrics[key])}</Typography>
@@ -80,7 +88,7 @@ export default function Dashboard() {
       </Grid>)}</Grid>
       <Typography variant="body2" color="text.secondary">Денежные показатели — ₸. Средняя ЗП: {metrics.salaryMethod === 'payroll_per_employee_month' ? 'ФОТ / человеко-месяцы' : metrics.salaryMethod === 'employee_weighted_source_salary' ? 'средняя исходных зарплат, взвешенная по численности' : 'недостаточно данных'}.</Typography>
       {metrics.warnings?.map((w: string) => <Alert key={w} severity="info" sx={{ mt: 1 }}>{w}</Alert>)}
-      <HistoryCharts data={history} />
+      {history.length>1?<HistoryCharts data={history}/>:<Alert severity="info" sx={{my:2}}>Для графика изменений нужен ещё один отчет за другой сопоставимый период.</Alert>}
       <Card sx={{ my: 2 }}><CardContent><Typography fontWeight={900}>Сценарии проверки</Typography>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>{[['high_payroll','Высокий ФОТ'],['high_salary','Высокая ЗП'],['low_salary','Низкая ЗП'],['low_workforce','Малая численность'],['tax_zero','ФОТ без налогов']].map(([key,label]) => <Button key={key} onClick={() => runScenario(key)}>{label}</Button>)}</Stack>
         {scenarioData && <Box><Typography>Результатов: {scenarioData.length}</Typography>{scenarioData.slice(0,5).map((r,i) => <Typography key={i}>{r.oked} — {r.activity} · ФОТ {formatMetric(r.payroll)}</Typography>)}</Box>}
@@ -88,6 +96,6 @@ export default function Dashboard() {
       {alerts.length > 0 && <Card sx={{ mb: 2 }}><CardContent><Chip label={'Сигналы: ' + alerts.length} color="warning" />{alerts.slice(0,6).map((a,i) => <Alert key={i} severity="warning" sx={{ mt: 1 }}>{a.company_name || a.activity}: {a.factors?.join('; ')}</Alert>)}</CardContent></Card>}
       <DataCharts data={chartRows} />
     </>}
-    <DataTable key={importId + ':' + revision} importId={importId} datasetType={selected?.datasetType} onImported={refresh} />
+    <Box sx={{display:view==='data'?'block':'none'}}><DataTable key={importId + ':' + revision} importId={importId} datasetType={selected?.datasetType} onImported={refresh}/></Box>
   </Box>;
 }

@@ -4,7 +4,8 @@ import Dashboard from './Dashboard';
 import api from '../api/axios';
 
 jest.mock('../api/axios', () => ({ __esModule: true, default: { get: jest.fn() } }));
-jest.mock('./DataCharts', () => () => null);
+jest.mock('../contexts/AuthContext', () => ({useAuth:()=>({isAdmin:false})}));
+jest.mock('./OverviewCharts', () => () => null);
 jest.mock('./HistoryCharts', () => ({
   __esModule: true, default: () => null,
   metricLabels: { organizations: 'Организации', payroll: 'ФОТ' },

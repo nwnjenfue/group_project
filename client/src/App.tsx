@@ -7,7 +7,7 @@ import Profile from './components/Profile';
 import AppBar from './components/AppBar';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-const theme = createTheme({ palette: { mode: 'light', primary: { main: '#0b3558' }, secondary: { main: '#0aa6a6' }, background: { default: '#f4f7fa' } }, typography: { fontFamily: 'Inter, Arial, sans-serif' }, shape: { borderRadius: 10 } });
+const theme = createTheme({ palette: { mode: 'light', primary: { main: '#145b78' }, secondary: { main: '#087f8c' }, background: { default: '#f4f7fb' } }, typography: { fontFamily: 'Inter, Arial, sans-serif', button:{textTransform:'none',fontWeight:700} }, shape: { borderRadius: 12 }, components:{MuiButton:{styleOverrides:{root:{whiteSpace:'nowrap',minHeight:40,boxShadow:'none'}}},MuiCard:{styleOverrides:{root:{boxShadow:'0 3px 18px rgba(20,50,80,.05)',border:'1px solid #e1e8ef'}}},MuiDialog:{styleOverrides:{paper:{borderRadius:20}}}} });
 
 function PrivateLayout() {
   const { user, loading } = useAuth();
