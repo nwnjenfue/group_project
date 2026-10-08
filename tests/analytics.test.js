@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parsePeriod, canonicalImports, metrics, changes } = require('../server/services/analyticsMath');
+const { mapRow, validateRow } = require('../server/services/importService');
 
 test('year, quarter and leap-year month have correct boundaries', () => {
   assert.equal(parsePeriod('2026').months, 12);
@@ -53,4 +54,23 @@ test('changes preserve absolute difference when baseline is zero', () => {
   assert.deepEqual(changes({payroll:100},{payroll:0}).payroll,{absolute:100,percent:null});
   assert.deepEqual(changes({payroll:140},{payroll:100}).payroll,{absolute:40,percent:40});
   assert.deepEqual(changes({payroll:null},{payroll:100}).payroll,{absolute:null,percent:null});
+});
+
+test('detail importer derives average workforce from monthly source values', () => {
+  const parsed = {
+    datasetType: 'detail',
+    monthlyEmployeeIndexes: Array.from({ length: 12 }, (_, index) => index + 4),
+    mapping: { oked_code: 0, activity: 1, company_bin: 2, company_name: 3, employee_months: 16, average_employees: 17, months: 18, payroll: 19, average_salary: 20 },
+    headers: Array.from({ length: 21 }, (_, index) => `column_${index}`),
+  };
+  const row = ['46909', 'Оптовая торговля', '030440004844', 'Тестовая компания', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 99, 99, 24000000, 1];
+  const result = mapRow(parsed, row);
+  assert.equal(result.months, 12);
+  assert.equal(result.employees, 1);
+  assert.equal(result.payroll, 24000000);
+  assert.equal(result.average_salary, 1);
+});
+
+test('test rows are rejected before import', () => {
+  assert.ok(validateRow({ oked_code: '99999', activity: 'тестировка импорта', company_bin: null, company_name: null }, 'summary').includes('Тестовая строка не допускается к импорту'));
 });

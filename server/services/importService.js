@@ -10,7 +10,9 @@ const FIELD_ALIASES = {
   oked_code: ['код окэд','код о к э д','окэд код','oked','oked code'],
   activity: ['вид деятельности','окэд','деятельность','вид деятельности окэд'],
   np_count: ['количество нп','кол во нп','количество налогоплательщиков','количество организаций'],
-  employees: ['средняя численность работников','средняя численность','ср числ','ср.числ','кол во чел','количество работников'],
+  employees: ['средняя численность работников','средняя численность','средняя числ работников'],
+  employee_months: ['кол во чел','количество чел','количество человек'],
+  average_employees: ['ср числ','ср.числ','средняя числ'],
   payroll: ['сумма по полю фот','фот','фонд оплаты труда','сумма фот'],
   average_salary: ['сумма по полю ср зп','сумма по полю ср.зп','ср зп','ср.зп','средняя зарплата'],
   ipn: ['ипн'],
@@ -81,6 +83,10 @@ function detectType(mapping) {
   return 'unknown';
 }
 
+function isTotalSourceRow(row) {
+  return row.some(value => /(?:^|\s)(?:общий\s+итог|итого)(?:\s|$)/i.test(cleanText(value)));
+}
+
 function parseWorkbook(filePath, originalFilename = filePath) {
   const workbook = XLSX.readFile(filePath, { cellDates: true, raw: true });
   if (!workbook.SheetNames.length) throw new Error('В Excel нет листов');
@@ -95,16 +101,42 @@ function parseWorkbook(filePath, originalFilename = filePath) {
   const datasetType = detectType(Object.fromEntries(Object.keys(mapping).map(k => [k, headers[mapping[k]]])));
   if (datasetType === 'unknown') throw new Error('Тип данных не определён. Нужны поля ОКЭД/деятельность/ФОТ для сводных данных или ОКЭД/ИИН-БИН/ФОТ/наименование для детальных данных.');
   const metadata = inferMetadata(matrix, originalFilename, header.index);
-  const rows = matrix.slice(header.index + 1).filter(row => row.some(v => v !== null && cleanText(v) !== ''));
-  return { workbook, sheetName, headerRow: header.index + 1, headers, mapping, datasetType, metadata, rows };
+  const rowNumbers = [];
+  const rows = matrix.slice(header.index + 1).filter((row, rowIndex) => {
+    const hasData = row.some(v => v !== null && cleanText(v) !== '');
+    if (hasData) rowNumbers.push(header.index + 2 + rowIndex);
+    return hasData;
+  });
+  const monthlyEmployeeIndexes = datasetType === 'detail'
+    ? headers.map((headerValue, index) => /^empl\s*\d+$/i.test(normalizeHeader(headerValue)) ? index : null).filter(index => index !== null)
+    : [];
+  const formulaErrors = rows.map((row, rowIndex) => {
+    if (isTotalSourceRow(row)) return [];
+    const excelRow = rowNumbers[rowIndex];
+    return Object.entries(mapping).flatMap(([field, columnIndex]) => {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: excelRow - 1, c: columnIndex })];
+      return cell?.t === 'e' ? [`Ошибка Excel в поле ${field}`] : [];
+    });
+  });
+  return { workbook, sheetName, headerRow: header.index + 1, headers, mapping, datasetType, metadata, rows, rowNumbers, monthlyEmployeeIndexes, formulaErrors };
 }
 
 function mapRow(parsed, row) {
   const get = field => parsed.mapping[field] === undefined ? null : row[parsed.mapping[field]];
+  const monthlyEmployees = (parsed.monthlyEmployeeIndexes || []).map(index => toNumber(row[index])).filter(value => value !== null);
+  const derivedMonths = monthlyEmployees.length || null;
+  const declaredMonths = toNumber(get('months'));
+  const months = parsed.datasetType === 'detail' ? (derivedMonths ?? declaredMonths) : null;
+  const employeeMonths = monthlyEmployees.length
+    ? monthlyEmployees.reduce((sum, value) => sum + value, 0)
+    : toNumber(get('employee_months'));
+  const detailEmployees = parsed.datasetType === 'detail'
+    ? (monthlyEmployees.length ? employeeMonths / derivedMonths : (toNumber(get('average_employees')) ?? (employeeMonths !== null && months > 0 ? employeeMonths / months : null)))
+    : null;
   const common = {
     oked_code: cleanText(get('oked_code')) || null,
     activity: cleanText(get('activity')) || null,
-    employees: toNumber(get('employees')),
+    employees: parsed.datasetType === 'detail' ? detailEmployees : toNumber(get('employees')),
     payroll: toNumber(get('payroll')),
     average_salary: toNumber(get('average_salary')),
     taxes: toNumber(get('taxes')),
@@ -124,7 +156,7 @@ function mapRow(parsed, row) {
   return {
     ...common,
     tax_code: cleanText(get('tax_code')) || null,
-    months: toNumber(get('months')),
+    months,
     raw: Object.fromEntries(parsed.headers.map((h, i) => [cleanText(h) || `column_${i+1}`, row[i] ?? null])),
   };
 }
@@ -133,6 +165,7 @@ function validateRow(row, type) {
   const errors = [];
   if (!row.oked_code) errors.push('Нет кода ОКЭД');
   if (!row.activity) errors.push('Нет вида деятельности/ОКЭД');
+  if (row.oked_code === '99999' || /(?:тест|test|демо|demo)/i.test(row.activity || '')) errors.push('Тестовая строка не допускается к импорту');
   if (type === 'detail') {
     if (!row.company_bin) errors.push('Нет ИИН/БИН');
     if (!row.company_name) errors.push('Нет наименования');
@@ -150,6 +183,7 @@ async function analyzeFile(filePath) {
     detectedColumns: Object.fromEntries(Object.entries(parsed.mapping).map(([k, idx]) => [k, parsed.headers[idx]])),
     metadata: parsed.metadata,
     totalRows: parsed.rows.length,
+    formulaErrorRows: parsed.formulaErrors.filter(errors => errors.length).length,
     sample,
   };
 }
@@ -169,8 +203,8 @@ async function importFile({ filePath, originalFilename, userId, ip, period, terr
   const valid = [];
   const invalid = [];
   rows.forEach((row, index) => {
-    const errors = validateRow(row, parsed.datasetType);
-    if (errors.length) invalid.push({ row: index + parsed.headerRow + 1, errors, raw: row.raw });
+    const errors = [...validateRow(row, parsed.datasetType), ...(parsed.formulaErrors[index] || [])];
+    if (errors.length) invalid.push({ row: parsed.rowNumbers[index], errors, raw: row.raw });
     else valid.push(row);
   });
   if (!valid.length) throw new Error('В файле нет валидных строк после проверки.');
@@ -214,4 +248,4 @@ async function importFile({ filePath, originalFilename, userId, ip, period, terr
   return { importId, datasetType: parsed.datasetType, period: parsed.metadata.periodLabel, territory: parsed.metadata.territory, rows: valid.length, skipped: invalid.length, detectedColumns };
 }
 
-module.exports = { analyzeFile, importFile };
+module.exports = { analyzeFile, importFile, parseWorkbook, mapRow, validateRow };
